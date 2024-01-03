@@ -37,16 +37,17 @@ fn evaluate_gj(&self, points: Vec<Fr>)->UniPoly{
         |sum,(coeff,term)| {
             let (coeff_eval, letteral_part)=self.eval_term(term, &points);
             let curr = match letteral_part {
-                None=>UniPoly::from_coefficients_vec(vec![(0,coeff*&coeff_eval)]),
+                None=>UniPoly::from_coefficients_vec(vec![(0,coeff*&coeff_eval)]),//this is a costant term:
                 _=>UniPoly::from_coefficients_vec(vec![(letteral_part.unwrap().degree(),coeff*&coeff_eval)])
                 
             };
             sum+curr
         })
 }
-fn eval_term(&self, term:&SparseTerm,points: &Vec<Fr>)->(Fr,Option<SparseTerm>){
-    /*this funtion outputs the evaluation of the letteral part of the monomial (term) 
-    by substituting values of points*/
+/// This funtion outputs the evaluation of the letteral part of the monomial (term) 
+/// by substituting values of points*/
+pub fn eval_term(&self, term:&SparseTerm,points: &Vec<Fr>)->(Fr,Option<SparseTerm>){
+
     let mut fixed_term:Option<SparseTerm>=None; //initialize fixed_term to none
     let coeff:Fr=cfg_into_iter!(term).fold(1u32.into(),|product,(var,exp)| match *var {
         /*j is the j-th variable*/
@@ -56,8 +57,6 @@ fn eval_term(&self, term:&SparseTerm,points: &Vec<Fr>)->(Fr,Option<SparseTerm>){
         j if j<self.r_vec.len()=>{ 
                 self.r_vec[j].pow(&[*exp as u64])*product}
     _=> points[*var-self.r_vec.len()].pow(&[*exp as u64])*product});
-    
-
     (coeff,fixed_term)
 }
 }
@@ -102,14 +101,21 @@ pub fn sum_check(g:MultyPoly,v:Fr)->bool{
     let vr=Verifier::initialize(&g, v);
     /*This is the starting round. The prover calculate g_0 */
     let mut g_i=pr.gen_unipoly(None); /*Prover sends g_0 to Verifier */
-    let expected_value= g_i.evaluate(&Fr::from(0))+g_i.evaluate(&Fr::from(1));
+    
+    /*Verifier checks g0(0)+g1(1)=v and checks the degrees. 
+    If it is all right then "Round 0 is ok" and the iteration starts.
+    Verifier generate a random r in Fr, computes g0(r)+g1(r) and sends r to the Prover
+    The prover generate the univariate g1(x1) and sends it back to the Verifier. Verifier checks g1(0)+g1(1)=?g0(r) */
+    let expected_value= g_i.evaluate(&Fr::from(0))+g_i.evaluate(&Fr::from(1));  
     let degrees=vr.degrees_look_up();
     assert_eq!(expected_value,v);
     assert!(g_i.degree() <= degrees[0]);
     println!("Round 0 ok!");
-    let mut r: Option<ark_ff::Fp<ark_ff::MontBackend<ark_bls12_381::FrConfig, 4>, 4>>;/*Verifier gets a random element in the field and sends it to prover */
-    let mut expected_value:Fr;/*Verifier calculate g_i(r); this is the next value to be checked */
+
+    let mut r: Option<ark_ff::Fp<ark_ff::MontBackend<ark_bls12_381::FrConfig, 4>, 4>>;
+    let mut expected_value:Fr;
     let mut v:Fr;
+
     for i in 1..g.num_vars{
         r= vr.get_random();
         expected_value=g_i.evaluate(&Fr::from(r.unwrap()));
@@ -119,6 +125,8 @@ pub fn sum_check(g:MultyPoly,v:Fr)->bool{
         assert!(g_i.degree()<=degrees[i]);
         println!("Round {} ok!",i);
         }
+    //Last round
+    
     r=vr.get_random();
     pr.r_vec.push(r.unwrap());
     expected_value=g_i.evaluate(&Fr::from(r.unwrap()));
@@ -133,8 +141,9 @@ mod tests {
     use ark_bls12_381::Fr;
     use ark_ff::{MontBackend, Fp};
     use ark_poly::{multivariate::{SparsePolynomial, SparseTerm, Term}, DenseMVPolynomial};
+    use crate::sumcheck::{slow_sum_g, sum_check};
 
-    use crate::sumcheck::slow_sum_g;
+    use super::{UniPoly, Prover};
 
     #[test]
     fn test_slow_sum() {
@@ -151,4 +160,32 @@ mod tests {
         let h = slow_sum_g(&poly);
         assert_eq!(h, 12.into());
     }
+    #[test]
+    fn test_gen_unipoly() {
+        let poly: SparsePolynomial<Fp<MontBackend<ark_bls12_381::FrConfig, 4>, 4>, SparseTerm> = SparsePolynomial::from_coefficients_vec(
+            3,
+            vec![
+                (Fr::from(2), SparseTerm::new(vec![(0, 3)])),
+                (Fr::from(1), SparseTerm::new(vec![(0, 1), (2, 1)])),
+                (Fr::from(1), SparseTerm::new(vec![(1, 1), (2, 1)])),
+            ],
+        );
+        let mut pr=Prover::initialize(&poly);
+        let expected_unipoly= UniPoly::from_coefficients_vec(vec![(0,Fr::from(34)),(1,Fr::from(1))]);
+        let g1=pr.gen_unipoly(Some(Fr::from(2)));
+        assert_eq!(g1,expected_unipoly);
+    }
+#[test]
+fn test_sum_check(){
+    let v=Fr::from(12);
+    let g: SparsePolynomial<Fp<MontBackend<ark_bls12_381::FrConfig, 4>, 4>, SparseTerm> = SparsePolynomial::from_coefficients_vec(
+        3,
+        vec![
+            (Fr::from(2), SparseTerm::new(vec![(0, 3)])),
+            (Fr::from(1), SparseTerm::new(vec![(0, 1), (2, 1)])),
+            (Fr::from(1), SparseTerm::new(vec![(1, 1), (2, 1)])),
+        ],
+    );
+    assert!(sum_check(g, v));
+}
 }
